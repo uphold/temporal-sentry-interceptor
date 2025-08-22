@@ -1,0 +1,47 @@
+version: "2"
+linters:
+  enable:
+    - errorlint
+    - godot
+    - protogetter
+    - revive
+    - testifylint
+    - unconvert
+    - whitespace
+    - usetesting
+    - lll
+    - cyclop
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+    rules:
+      - path: _test\.go
+        linters:
+          - cyclop
+  settings:
+    cyclop:
+      max-complexity: 20
+    lll:
+      line-length: 120
+      tab-width: 1
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+  settings:
+    gofmt:
+      rewrite-rules:
+        - pattern: interface{}
+          replacement: any
+    gofumpt:
+      extra-rules: true
+  exclusions:
+    generated: lax
