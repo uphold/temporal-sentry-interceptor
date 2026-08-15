@@ -64,6 +64,42 @@ func main() {
 }
 ```
 
+## Issue Grouping
+
+Errors are captured from the interceptor rather than from the code that failed, so every event
+carries the same stack trace. Sentry groups on that stack by default, which bundles unrelated
+failures into one ever-growing issue — the title then describes whichever error happened to fire
+last, and the issue reopens forever because something in the bundle keeps failing.
+
+To avoid that, errors are reported with an explicit fingerprint:
+
+```
+<event name> / <workflow or activity type> / <error type>
+```
+
+The error type comes from `temporal.ApplicationError.Type()`, falling back to the Go type of the
+error. Both are low cardinality and stable, so each failure mode gets its own issue.
+
+Panics are left on Sentry's default grouping: a recovered panic carries a real stack trace, so
+grouping already works for them.
+
+To group differently, set your own fingerprint from `WithConfigureSentryScope` — it runs after the
+default and overrides it:
+
+```go
+temporalsentry.WithConfigureSentryScope(func(
+    ctx context.Context,
+    request []any,
+    eventName string,
+    activityInfo *activity.Info,
+    workflowInfo *workflow.Info,
+) func(scope *sentry.Scope) {
+    return func(scope *sentry.Scope) {
+        scope.SetFingerprint([]string{"my-own-key"})
+    }
+})
+```
+
 ## Configuration Options
 
 ### Custom Sentry Scope
@@ -75,6 +111,7 @@ interceptor := temporalsentry.New(
     temporalsentry.WithConfigureSentryScope(func(
         ctx context.Context,
         request []any,
+        eventName string,
         activityInfo *activity.Info,
         workflowInfo *workflow.Info,
     ) func(scope *sentry.Scope) {
