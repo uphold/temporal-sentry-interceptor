@@ -34,11 +34,11 @@ func (s *TemporalWorkflowInterceptor) ExecuteWorkflow(
 	ctx workflow.Context, in *interceptor.ExecuteWorkflowInput,
 ) (any, error) {
 	info := workflow.GetInfo(ctx)
-	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowExecuteWorkflow", in.Args, info)()
+	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowExecuteWorkflow", in.Args, info, true)()
 
 	result, err := s.Next.ExecuteWorkflow(ctx, in)
 	if err != nil {
-		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowExecuteWorkflow", in.Args, info)
+		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowExecuteWorkflow", in.Args, info, true)
 	}
 
 	return result, err
@@ -47,11 +47,11 @@ func (s *TemporalWorkflowInterceptor) ExecuteWorkflow(
 // HandleSignal intercepts signal handling and reports errors/panics to Sentry.
 func (s *TemporalWorkflowInterceptor) HandleSignal(ctx workflow.Context, in *interceptor.HandleSignalInput) error {
 	info := workflow.GetInfo(ctx)
-	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowHandleSignalPanic", []any{in.Arg}, info)()
+	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowHandleSignalPanic", []any{in.Arg}, info, true)()
 
 	err := s.Next.HandleSignal(ctx, in)
 	if err != nil {
-		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowHandleSignal", []any{in.Arg}, info)
+		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowHandleSignal", []any{in.Arg}, info, true)
 	}
 
 	return err
@@ -60,11 +60,11 @@ func (s *TemporalWorkflowInterceptor) HandleSignal(ctx workflow.Context, in *int
 // HandleQuery intercepts query handling and reports errors/panics to Sentry.
 func (s *TemporalWorkflowInterceptor) HandleQuery(ctx workflow.Context, in *interceptor.HandleQueryInput) (any, error) {
 	info := workflow.GetInfo(ctx)
-	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowHandleQueryPanic", in.Args, info)()
+	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowHandleQueryPanic", in.Args, info, false)()
 
 	result, err := s.Next.HandleQuery(ctx, in)
 	if err != nil {
-		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowHandleQuery", in.Args, info)
+		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowHandleQuery", in.Args, info, false)
 	}
 
 	return result, err
@@ -73,11 +73,11 @@ func (s *TemporalWorkflowInterceptor) HandleQuery(ctx workflow.Context, in *inte
 // ValidateUpdate intercepts update validation and reports errors/panics to Sentry.
 func (s *TemporalWorkflowInterceptor) ValidateUpdate(ctx workflow.Context, in *interceptor.UpdateInput) error {
 	info := workflow.GetInfo(ctx)
-	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowValidateUpdatePanic", in.Args, info)()
+	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowValidateUpdatePanic", in.Args, info, false)()
 
 	err := s.Next.ValidateUpdate(ctx, in)
 	if err != nil {
-		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowValidateUpdate", in.Args, info)
+		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowValidateUpdate", in.Args, info, false)
 	}
 
 	return err
@@ -86,11 +86,11 @@ func (s *TemporalWorkflowInterceptor) ValidateUpdate(ctx workflow.Context, in *i
 // ExecuteUpdate intercepts update execution and reports errors/panics to Sentry.
 func (s *TemporalWorkflowInterceptor) ExecuteUpdate(ctx workflow.Context, in *interceptor.UpdateInput) (any, error) {
 	info := workflow.GetInfo(ctx)
-	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowExecuteUpdatePanic", in.Args, info)()
+	defer s.captureWorkflowPanicToSentry(ctx, "WorkflowExecuteUpdatePanic", in.Args, info, true)()
 
 	result, err := s.Next.ExecuteUpdate(ctx, in)
 	if err != nil {
-		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowExecuteUpdate", in.Args, info)
+		s.captureWorkflowErrorToSentry(ctx, err, "WorkflowExecuteUpdate", in.Args, info, true)
 	}
 
 	return result, err
@@ -104,12 +104,19 @@ func (s *TemporalWorkflowInterceptor) ExecuteUpdate(ctx workflow.Context, in *in
 // was emitted on the original execution and never re-issued on replay,
 // permanently failing the run with a nondeterminism error (TMPRL1100).
 // CaptureException only enqueues the event on Sentry's async transport, so it
-// never blocks the workflow task. IsReplaying now guards only against reporting
-// the same error again during replays, the sole side effect it may guard.
+// never blocks the workflow task.
+//
+// replayable states whether the handler re-executes from history during replay
+// (workflow body, signals, accepted updates); for those, IsReplaying suppresses
+// re-reporting an error already reported by the original execution. Queries are
+// never re-delivered by replay and update validators never run during replay,
+// so their handlers pass replayable=false: a cold worker that just rebuilt
+// state from history still has IsReplaying()==true when serving a query, and a
+// blanket guard would silently drop those errors.
 func (s *TemporalWorkflowInterceptor) captureWorkflowErrorToSentry(
-	ctx workflow.Context, err error, eventName string, req []any, info *workflow.Info,
+	ctx workflow.Context, err error, eventName string, req []any, info *workflow.Info, replayable bool,
 ) {
-	if workflow.IsReplaying(ctx) {
+	if replayable && workflow.IsReplaying(ctx) {
 		return
 	}
 
@@ -126,7 +133,7 @@ func (s *TemporalWorkflowInterceptor) captureWorkflowErrorToSentry(
 // activity is involved) and always re-raises the panic, so that neither
 // filtering nor replaying can swallow it.
 func (s *TemporalWorkflowInterceptor) captureWorkflowPanicToSentry(
-	ctx workflow.Context, eventName string, req []any, info *workflow.Info,
+	ctx workflow.Context, eventName string, req []any, info *workflow.Info, replayable bool,
 ) func() {
 	return func() {
 		r := recover()
@@ -135,7 +142,8 @@ func (s *TemporalWorkflowInterceptor) captureWorkflowPanicToSentry(
 		}
 
 		filtered := s.filterWorkflowPanic != nil && s.filterWorkflowPanic(r, req, info)
-		if !workflow.IsReplaying(ctx) && !filtered {
+		alreadyReported := replayable && workflow.IsReplaying(ctx)
+		if !alreadyReported && !filtered {
 			input := ReportPanicInput{Panic: r, EventName: eventName, Request: req, WorkflowInfo: info}
 			_ = s.sentryActivities.ReportPanic(context.Background(), input)
 		}

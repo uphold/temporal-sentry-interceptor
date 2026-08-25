@@ -19,6 +19,16 @@ func failingWorkflow(_ workflow.Context) error {
 	return errors.New("routine workflow failure")
 }
 
+func failingQueryWorkflow(ctx workflow.Context) error {
+	if err := workflow.SetQueryHandler(ctx, "failingQuery", func() (string, error) {
+		return "", errors.New("query handler failure")
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func panickingWorkflow(_ workflow.Context) error {
 	panic("workflow panic")
 }
@@ -97,4 +107,24 @@ func TestFilteredWorkflowPanicStillPropagates(t *testing.T) {
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.Error(t, env.GetWorkflowError(), "a filtered panic is not reported but must still fail the workflow")
+}
+
+// Query-handler errors are captured without a replay guard: queries are never
+// re-delivered by replay, and a cold worker serving one after rebuilding state
+// from history still has IsReplaying()==true — a blanket guard would silently
+// drop the error. The test environment cannot simulate that cold-worker state,
+// so this asserts the capture path itself; the replay-flag reasoning is
+// documented on captureWorkflowErrorToSentry.
+func TestQueryErrorIsReported(t *testing.T) {
+	env, reported, localActivityRan := newReportingTestEnv(t)
+	env.RegisterWorkflow(failingQueryWorkflow)
+
+	env.ExecuteWorkflow(failingQueryWorkflow)
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	_, err := env.QueryWorkflow("failingQuery")
+	require.Error(t, err)
+	assert.True(t, *reported, "query handler error should be reported to Sentry")
+	assert.False(t, *localActivityRan)
 }
