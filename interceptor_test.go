@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/stretchr/testify/assert"
@@ -43,17 +42,6 @@ func TestNew(t *testing.T) {
 				}),
 				WithFilterWorkflowPanic(func(p any, _ []any, _ *workflow.Info) bool {
 					return p == "test panic"
-				}),
-			},
-		},
-		{
-			name: "with activity options",
-			opts: []Option{
-				WithWorkflowErrorActivityOptions(workflow.LocalActivityOptions{
-					ScheduleToCloseTimeout: 10 * time.Second,
-				}),
-				WithWorkflowPanicActivityOptions(workflow.LocalActivityOptions{
-					ScheduleToCloseTimeout: 15 * time.Second,
 				}),
 			},
 		},
@@ -138,24 +126,6 @@ func TestOptions(t *testing.T) {
 		result := interceptor.options.filterActivityPanic("activity panic", nil, nil)
 		assert.True(t, result)
 	})
-
-	t.Run("WithWorkflowPanicActivityOptions", func(t *testing.T) {
-		opts := workflow.LocalActivityOptions{
-			ScheduleToCloseTimeout: 30 * time.Second,
-		}
-
-		interceptor := New(WithWorkflowPanicActivityOptions(opts))
-		assert.Equal(t, opts, interceptor.options.workflowPanicActivityOptions)
-	})
-
-	t.Run("WithWorkflowErrorActivityOptions", func(t *testing.T) {
-		opts := workflow.LocalActivityOptions{
-			ScheduleToCloseTimeout: 25 * time.Second,
-		}
-
-		interceptor := New(WithWorkflowErrorActivityOptions(opts))
-		assert.Equal(t, opts, interceptor.options.workflowErrorActivityOptions)
-	})
 }
 
 func TestDefaultOptions(t *testing.T) {
@@ -166,14 +136,6 @@ func TestDefaultOptions(t *testing.T) {
 	assert.Nil(t, opts.filterWorkflowPanic)
 	assert.Nil(t, opts.filterActivityError)
 	assert.Nil(t, opts.filterActivityPanic)
-
-	assert.Equal(t, "ReportPanicToSentry", opts.workflowPanicActivityOptions.Summary)
-	assert.Equal(t, 5*time.Second, opts.workflowPanicActivityOptions.ScheduleToCloseTimeout)
-	assert.Equal(t, int32(1), opts.workflowPanicActivityOptions.RetryPolicy.MaximumAttempts)
-
-	assert.Equal(t, "ReportErrorToSentry", opts.workflowErrorActivityOptions.Summary)
-	assert.Equal(t, 5*time.Second, opts.workflowErrorActivityOptions.ScheduleToCloseTimeout)
-	assert.Equal(t, int32(1), opts.workflowErrorActivityOptions.RetryPolicy.MaximumAttempts)
 }
 
 func TestSentryActivitiesReportError(t *testing.T) {
@@ -267,7 +229,8 @@ func TestInterceptorIntegration(t *testing.T) {
 					return func(scope *sentry.Scope) {
 						scope.SetTag("integration_test", "true")
 					}
-				}),
+				},
+			),
 			WithFilterWorkflowError(func(_ error, _ []any, _ *workflow.Info) bool {
 				errorFiltered = true
 				return false
@@ -275,9 +238,6 @@ func TestInterceptorIntegration(t *testing.T) {
 			WithFilterWorkflowPanic(func(_ any, _ []any, _ *workflow.Info) bool {
 				panicFiltered = true
 				return false
-			}),
-			WithWorkflowErrorActivityOptions(workflow.LocalActivityOptions{
-				ScheduleToCloseTimeout: 10 * time.Second,
 			}),
 		)
 

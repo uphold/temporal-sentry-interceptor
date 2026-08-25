@@ -1,0 +1,7 @@
+# Sentry capture runs inline in the workflow goroutine by design: it emits no
+# workflow commands, so it cannot affect replay determinism (see workflow.go).
+# Reporting through a local activity instead is what this config must never be
+# used to reintroduce — its MarkerRecorded event breaks replay (TMPRL1100).
+decls:
+  "(*github.com/uphold/temporal-sentry-interceptor.TemporalWorkflowInterceptor).captureWorkflowErrorToSentry": false
+  "(*github.com/uphold/temporal-sentry-interceptor.TemporalWorkflowInterceptor).captureWorkflowPanicToSentry": false

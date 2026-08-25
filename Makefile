@@ -16,7 +16,7 @@ lint:  ## runs linter checks
 
 .PHONY: lint-workflows
 lint-workflows: ## runs workflow linting checks
-	workflowcheck ./...
+	workflowcheck -config workflowcheck.config.yaml ./...
 
 .PHONY: lint-fix
 lint-fix:  ## runs linter checks with autofix
