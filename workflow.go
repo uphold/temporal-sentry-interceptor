@@ -1,17 +1,17 @@
 package temporalsentryinterceptor
 
 import (
+	"context"
+
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/workflow"
 )
 
 // TemporalWorkflowInterceptor provides Sentry error and panic reporting for Temporal workflow executions.
 type TemporalWorkflowInterceptor struct {
-	sentryActivities             sentryActivities
-	filterWorkflowError          FilterWorkflowErrorFunc
-	filterWorkflowPanic          FilterWorkflowPanicFunc
-	workflowPanicActivityOptions workflow.LocalActivityOptions
-	workflowErrorActivityOptions workflow.LocalActivityOptions
+	sentryActivities    sentryActivities
+	filterWorkflowError FilterWorkflowErrorFunc
+	filterWorkflowPanic FilterWorkflowPanicFunc
 	interceptor.WorkflowInboundInterceptorBase
 }
 
@@ -20,11 +20,9 @@ func (s TemporalWorkerInterceptor) InterceptWorkflow(
 	_ workflow.Context, next interceptor.WorkflowInboundInterceptor,
 ) interceptor.WorkflowInboundInterceptor {
 	return &TemporalWorkflowInterceptor{
-		sentryActivities:             s.sentryActivities,
-		filterWorkflowError:          s.options.filterWorkflowError,
-		filterWorkflowPanic:          s.options.filterWorkflowPanic,
-		workflowPanicActivityOptions: s.options.workflowPanicActivityOptions,
-		workflowErrorActivityOptions: s.options.workflowErrorActivityOptions,
+		sentryActivities:    s.sentryActivities,
+		filterWorkflowError: s.options.filterWorkflowError,
+		filterWorkflowPanic: s.options.filterWorkflowPanic,
 		WorkflowInboundInterceptorBase: interceptor.WorkflowInboundInterceptorBase{
 			Next: next,
 		},
@@ -98,7 +96,16 @@ func (s *TemporalWorkflowInterceptor) ExecuteUpdate(ctx workflow.Context, in *in
 	return result, err
 }
 
-// captureWorkflowErrorToSentry reports workflow errors to Sentry with context and filtering.
+// captureWorkflowErrorToSentry reports workflow errors to Sentry inline, from the
+// workflow goroutine.
+//
+// Reporting must not produce workflow commands: an earlier version ran a local
+// activity here, whose MarkerRecorded history event — guarded by IsReplaying —
+// was emitted on the original execution and never re-issued on replay,
+// permanently failing the run with a nondeterminism error (TMPRL1100).
+// CaptureException only enqueues the event on Sentry's async transport, so it
+// never blocks the workflow task. IsReplaying now guards only against reporting
+// the same error again during replays, the sole side effect it may guard.
 func (s *TemporalWorkflowInterceptor) captureWorkflowErrorToSentry(
 	ctx workflow.Context, err error, eventName string, req []any, info *workflow.Info,
 ) {
@@ -110,33 +117,29 @@ func (s *TemporalWorkflowInterceptor) captureWorkflowErrorToSentry(
 		return
 	}
 
-	disconnectedCtx, _ := workflow.NewDisconnectedContext(ctx)
-	disconnectedCtx = workflow.WithLocalActivityOptions(disconnectedCtx, s.workflowErrorActivityOptions)
-
 	input := ReportErrorInput{Error: err, EventName: eventName, Request: req, WorkflowInfo: info}
-	_ = workflow.ExecuteLocalActivity(disconnectedCtx, s.sentryActivities.ReportError, input).Get(disconnectedCtx, nil)
+	_ = s.sentryActivities.ReportError(context.Background(), input)
 }
 
-// captureWorkflowPanicToSentry returns a deferred function that reports workflow panics to Sentry.
+// captureWorkflowPanicToSentry returns a deferred function that reports workflow
+// panics to Sentry inline (see captureWorkflowErrorToSentry for why no local
+// activity is involved) and always re-raises the panic, so that neither
+// filtering nor replaying can swallow it.
 func (s *TemporalWorkflowInterceptor) captureWorkflowPanicToSentry(
 	ctx workflow.Context, eventName string, req []any, info *workflow.Info,
 ) func() {
 	return func() {
-		if workflow.IsReplaying(ctx) {
+		r := recover()
+		if r == nil {
 			return
 		}
 
-		if r := recover(); r != nil {
-			if s.filterWorkflowPanic != nil && s.filterWorkflowPanic(r, req, info) {
-				return
-			}
-
-			disconnectedCtx, _ := workflow.NewDisconnectedContext(ctx)
-			disconnectedCtx = workflow.WithLocalActivityOptions(disconnectedCtx, s.workflowPanicActivityOptions)
+		filtered := s.filterWorkflowPanic != nil && s.filterWorkflowPanic(r, req, info)
+		if !workflow.IsReplaying(ctx) && !filtered {
 			input := ReportPanicInput{Panic: r, EventName: eventName, Request: req, WorkflowInfo: info}
-			_ = workflow.ExecuteLocalActivity(disconnectedCtx, s.sentryActivities.ReportPanic, input).Get(disconnectedCtx, nil)
-
-			panic(r)
+			_ = s.sentryActivities.ReportPanic(context.Background(), input)
 		}
+
+		panic(r)
 	}
 }

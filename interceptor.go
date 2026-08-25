@@ -13,11 +13,10 @@ type TemporalWorkerInterceptor struct {
 
 // New creates a new TemporalWorkerInterceptor with the provided options.
 //
-// Note: This interceptor uses local activities for error reporting which must
-// complete within the workflow task timeout (default 10s).
-// The default timeout is 5s to provide a safety margin.
-// Learn more about local activities vs activities here:
-// https://community.temporal.io/t/local-activity-vs-activity/290/3.
+// Note: workflow errors and panics are reported inline from the workflow
+// goroutine, so Sentry must be configured with an asynchronous transport (the
+// default). A synchronous transport would block the workflow task on network
+// I/O and trip the SDK's deadlock detector (1s).
 func New(opts ...Option) *TemporalWorkerInterceptor {
 	interceptor := &TemporalWorkerInterceptor{
 		options: defaultOptions(),

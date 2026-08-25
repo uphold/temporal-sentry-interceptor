@@ -2,11 +2,9 @@ package temporalsentryinterceptor
 
 import (
 	"context"
-	"time"
 
 	"github.com/getsentry/sentry-go"
 	"go.temporal.io/sdk/activity"
-	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
 
@@ -29,13 +27,11 @@ type (
 
 // options holds configuration settings for the Temporal Sentry interceptor.
 type options struct {
-	configureSentryScope         ConfigureSentryScopeFunc
-	filterWorkflowError          FilterWorkflowErrorFunc
-	filterWorkflowPanic          FilterWorkflowPanicFunc
-	filterActivityError          FilterActivityErrorFunc
-	filterActivityPanic          FilterActivityPanicFunc
-	workflowPanicActivityOptions workflow.LocalActivityOptions
-	workflowErrorActivityOptions workflow.LocalActivityOptions
+	configureSentryScope ConfigureSentryScopeFunc
+	filterWorkflowError  FilterWorkflowErrorFunc
+	filterWorkflowPanic  FilterWorkflowPanicFunc
+	filterActivityError  FilterActivityErrorFunc
+	filterActivityPanic  FilterActivityPanicFunc
 }
 
 // defaultOptions returns default configuration options for the interceptor.
@@ -67,20 +63,6 @@ func defaultOptions() *options {
 		filterWorkflowPanic: nil,
 		filterActivityError: nil,
 		filterActivityPanic: nil,
-		workflowPanicActivityOptions: workflow.LocalActivityOptions{
-			Summary:                "ReportPanicToSentry",
-			ScheduleToCloseTimeout: 5 * time.Second,
-			RetryPolicy: &temporal.RetryPolicy{
-				MaximumAttempts: 1,
-			},
-		},
-		workflowErrorActivityOptions: workflow.LocalActivityOptions{
-			Summary:                "ReportErrorToSentry",
-			ScheduleToCloseTimeout: 5 * time.Second,
-			RetryPolicy: &temporal.RetryPolicy{
-				MaximumAttempts: 1,
-			},
-		},
 	}
 
 	return o
@@ -118,19 +100,5 @@ func WithFilterActivityError(filterActivityError FilterActivityErrorFunc) Option
 func WithFilterActivityPanic(filterActivityPanic FilterActivityPanicFunc) Option {
 	return func(o *options) {
 		o.filterActivityPanic = filterActivityPanic
-	}
-}
-
-// WithWorkflowPanicActivityOptions sets custom activity options for panic reporting.
-func WithWorkflowPanicActivityOptions(workflowPanicActivityOptions workflow.LocalActivityOptions) Option {
-	return func(o *options) {
-		o.workflowPanicActivityOptions = workflowPanicActivityOptions
-	}
-}
-
-// WithWorkflowErrorActivityOptions sets custom activity options for error reporting.
-func WithWorkflowErrorActivityOptions(workflowErrorActivityOptions workflow.LocalActivityOptions) Option {
-	return func(o *options) {
-		o.workflowErrorActivityOptions = workflowErrorActivityOptions
 	}
 }

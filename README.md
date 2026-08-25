@@ -151,23 +151,6 @@ interceptor := temporalsentry.New(
 )
 ```
 
-### Custom Activity Options
-
-Configure the activity options for workflow errors and panics:
-
-**Important note**: Local activities should not take more than the Temporal workflow task timeout (which defaults to 10 seconds), be mindful of that if changing the timeout from its default of 5 seconds. [See the difference between Temporal activities and local activities for more information](https://community.temporal.io/t/local-activity-vs-activity/290/3).
-
-```go
-interceptor := temporalsentry.New(
-    temporalsentry.WithWorkflowErrorActivityOptions(workflow.LocalActivityOptions{
-        ScheduleToCloseTimeout: 10 * time.Second,
-        RetryPolicy: &temporal.RetryPolicy{
-            MaximumAttempts: 3,
-        },
-    }),
-)
-```
-
 ## Advanced Usage
 
 ### Multiple Interceptors
@@ -187,7 +170,7 @@ w := worker.New(c, "task-queue", worker.Options{
 
 ## Note on Sentry configuration
 
-It is recommended that Sentry's `HTTPSyncTransport` is not used, as all calls to `sentry.CaptureException` and `sentry.Recover` will block on the request being captured to Sentry if that transport is used. If the application's network connection to Sentry's servers is unreliable or unavailable it will cause issues due to the constraints that Temporal's local activities have of not being able to run for more than the amount of time a workflow task can (default is 10 seconds).
+Sentry's `HTTPSyncTransport` must not be used. Workflow errors and panics are reported inline from the workflow goroutine — with an asynchronous transport (Sentry's default) `sentry.CaptureException` and `sentry.Recover` only enqueue the event and return immediately, but a synchronous transport would block the workflow task on network I/O and trip the Temporal SDK's deadlock detector (1 second).
 
 ## Contributing
 
