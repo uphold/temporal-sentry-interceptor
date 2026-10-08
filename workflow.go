@@ -110,10 +110,23 @@ func (s *TemporalWorkflowInterceptor) captureWorkflowErrorToSentry(
 		return
 	}
 
-	disconnectedCtx, _ := workflow.NewDisconnectedContext(ctx)
+	// `NewDisconnectedContext` returns a context that is registered with the workflow's context
+	// runtime and is only unregistered when its cancel function is called. Discarding the cancel
+	// func (as this code did) leaked one context per reported error or panic for the lifetime of the
+	// workflow execution, so a long-running workflow that failed repeatedly accumulated them.
+	disconnectedCtx, cancel := workflow.NewDisconnectedContext(ctx)
+	defer cancel()
+
 	disconnectedCtx = workflow.WithLocalActivityOptions(disconnectedCtx, s.workflowErrorActivityOptions)
 
-	input := ReportErrorInput{Error: err, EventName: eventName, Request: req, WorkflowInfo: info}
+	// `ReportErrorInput` is passed as a local-activity argument, which means it is serialized
+	// through the workflow data converter and recorded in workflow history — a durable, replicated
+	// store. `req` is the raw activity/signal/update payload, so this writes arbitrary and possibly
+	// sensitive application data into history on every reported failure. Only identifiers are sent;
+	// the details are read from the hub inside the activity. The error itself is retained because a
+	// Sentry report without it carries no diagnostic value, and `filterWorkflowError` exists so
+	// callers can drop errors that must not be persisted.
+	input := ReportErrorInput{Error: err, EventName: eventName, WorkflowInfo: info}
 	_ = workflow.ExecuteLocalActivity(disconnectedCtx, s.sentryActivities.ReportError, input).Get(disconnectedCtx, nil)
 }
 
@@ -131,9 +144,14 @@ func (s *TemporalWorkflowInterceptor) captureWorkflowPanicToSentry(
 				return
 			}
 
-			disconnectedCtx, _ := workflow.NewDisconnectedContext(ctx)
+			disconnectedCtx, cancel := workflow.NewDisconnectedContext(ctx)
+			defer cancel()
+
 			disconnectedCtx = workflow.WithLocalActivityOptions(disconnectedCtx, s.workflowPanicActivityOptions)
-			input := ReportPanicInput{Panic: r, EventName: eventName, Request: req, WorkflowInfo: info}
+
+			// See `captureWorkflowErrorToSentry`: the payload is recorded in workflow history, so the
+			// raw request is deliberately not included.
+			input := ReportPanicInput{Panic: r, EventName: eventName, WorkflowInfo: info}
 			_ = workflow.ExecuteLocalActivity(disconnectedCtx, s.sentryActivities.ReportPanic, input).Get(disconnectedCtx, nil)
 
 			panic(r)
